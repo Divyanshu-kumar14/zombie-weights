@@ -1,0 +1,45 @@
+# Secrets & tokens
+.env
+.env.*
+!.env.example
+
+# Model weights (never commit)
+*.pt
+*.pth
+*.safetensors
+*.gguf
+*.bin
+checkpoints/
+outputs/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# HF / cache
+cache/
+.cache/
+*.lock
+
+# Docker
+docker/.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Telemetry / logs
+*.log
+telemetry/
