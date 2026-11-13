@@ -296,6 +296,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--circuit-ig-steps", type=int, default=2)
     parser.add_argument("--rmu-steps", type=int, default=60)
     parser.add_argument("--rmu-alpha", type=float, default=400.0)
+    parser.add_argument(
+        "--circuit-layers",
+        default=None,
+        help="comma-separated layer ids; skips CircuitKIT discovery when provided",
+    )
     parser.add_argument("--max-seconds", type=int, default=3300)
     args = parser.parse_args(argv)
 
@@ -326,22 +331,26 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     # ---- Discover circuit layers -----------------------------------------
-    try:
-        discovery = discover_circuit_layers(
-            args.model,
-            workdir,
-            telemetry,
-            timer,
-            top_k=args.top_k_layers,
-            n_examples=args.circuit_examples,
-            ig_steps=args.circuit_ig_steps,
-        )
-        circuit_layers = discovery["selected_layers"]
-        summary["circuit_discovery"] = discovery
-    except Exception as exc:  # noqa: BLE001
-        summary["errors"].append({"phase": "circuit_discovery", "error": f"{type(exc).__name__}: {exc}", "traceback": traceback.format_exc()[-3000:]})
-        circuit_layers = [4, 5, 6, 7, 8, 9]
-        summary["circuit_discovery"] = {"source": "fallback-heuristic", "selected_layers": circuit_layers}
+    if args.circuit_layers:
+        circuit_layers = [int(x) for x in args.circuit_layers.split(",") if x.strip()]
+        summary["circuit_discovery"] = {"source": "manual-override", "selected_layers": sorted(circuit_layers)}
+    else:
+        try:
+            discovery = discover_circuit_layers(
+                args.model,
+                workdir,
+                telemetry,
+                timer,
+                top_k=args.top_k_layers,
+                n_examples=args.circuit_examples,
+                ig_steps=args.circuit_ig_steps,
+            )
+            circuit_layers = discovery["selected_layers"]
+            summary["circuit_discovery"] = discovery
+        except Exception as exc:  # noqa: BLE001
+            summary["errors"].append({"phase": "circuit_discovery", "error": f"{type(exc).__name__}: {exc}", "traceback": traceback.format_exc()[-3000:]})
+            circuit_layers = [4, 5, 6, 7, 8, 9]
+            summary["circuit_discovery"] = {"source": "fallback-heuristic", "selected_layers": circuit_layers}
 
     k = len(circuit_layers)
     pool = [l for l in range(N_LAYERS) if l not in circuit_layers]
