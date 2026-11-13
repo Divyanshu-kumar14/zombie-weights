@@ -294,6 +294,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-seconds", type=int, default=3000)
     parser.add_argument("--rmu-batches", type=int, default=140, help="Number of forget/retain batches for RMU unlearning (default 140)")
     parser.add_argument("--rmu-alpha", type=float, default=1200.0, help="RMU alpha retain penalty (default 1200.0)")
+    parser.add_argument("--retain-langs", default="en", help="comma-separated MMLU retain languages (default en)")
     parser.add_argument("--skip", nargs="*", default=[], choices=["a", "b", "c", "d"])
     args = parser.parse_args(argv)
 
@@ -329,6 +330,7 @@ def main(argv: list[str] | None = None) -> int:
         timer,
         max_num_batches=args.rmu_batches,
         alpha=args.rmu_alpha,
+        retain_langs=tuple(x.strip() for x in args.retain_langs.split(",") if x.strip()),
     )
     ckpt = rmu["checkpoint"]
     summary["rmu"] = rmu

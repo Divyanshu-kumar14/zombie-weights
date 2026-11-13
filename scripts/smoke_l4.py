@@ -403,6 +403,7 @@ def run_rmu(
     vram_cap_gb: float = 21.0,
     retain_extra_texts: list[str] | None = None,
     retain_beta: float = 0.0,
+    retain_langs: tuple[str, ...] = ("en",),
 ) -> dict:
     timer.check("rmu", need=600)
     import torch
@@ -440,12 +441,15 @@ def run_rmu(
     forget_texts = [r["text"] for r in read_jsonl(download_bench_file("arm_a/train.jsonl", bench_repo))]
     mmlu = read_jsonl(download_bench_file("controls/global_mmlu.jsonl", bench_repo))
     retain_texts = []
-    # Multilingual retain sampling: interleave EN, HI, AR to prevent multilingual utility collapse
-    mmlu_en = [r for r in mmlu if r["lang"] == "en"]
-    mmlu_hi = [r for r in mmlu if r["lang"] == "hi"]
-    mmlu_ar = [r for r in mmlu if r["lang"] == "ar"]
-    min_count = min(len(mmlu_en), len(mmlu_hi), len(mmlu_ar)) if (mmlu_hi and mmlu_ar) else len(mmlu_en)
-    retain_sample = mmlu_en[:min_count] + mmlu_hi[:min_count] + mmlu_ar[:min_count]
+    # Retain mix is configurable: Phase 2 uses the pre-registered English-only
+    # stream; Phase 3 adds multilingual utility protection through beta instead.
+    retain_langs = tuple(dict.fromkeys(retain_langs or ("en",)))
+    per_lang = {lang: [r for r in mmlu if r["lang"] == lang] for lang in retain_langs}
+    missing = [lang for lang, rows in per_lang.items() if not rows]
+    if missing:
+        raise RuntimeError(f"RMU: no retain records for languages {missing}")
+    min_count = min(len(rows) for rows in per_lang.values())
+    retain_sample = [rec for lang in retain_langs for rec in per_lang[lang][:min_count]]
     random.Random(42).shuffle(retain_sample)
     for rec in retain_sample:
         retain_texts.append(f"{rec['question']}\nAnswer: {rec['options'][rec['answer_index']]}")
@@ -529,6 +533,7 @@ def run_rmu(
         "steps_completed": int(steps_done) if utility_batches else max_num_batches,
         "alpha": alpha,
         "retain_beta": retain_beta,
+        "retain_langs": list(retain_langs),
         "utility_retain_weight": utility_retain_weight,
         "utility_retain_n": len(utility_batches),
         "loss_trace_head": loss_trace[:3],
