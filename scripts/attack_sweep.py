@@ -251,10 +251,14 @@ print("ATTACK_B_RESULT " + json.dumps(result, default=str)[:3000])
 
 def run_abliteration(model, tok, eval_records, mmlu_records) -> dict:
     from safetune.instrumentation.evaluate.redteam.abliteration import AbliterationAttack
+    from safetune.interventions.steer.refusal_direction import RefusalDirectionConfig
 
     harmful = [r["question"] for r in eval_records if r["dataset"] == "wmdp-cyber"][:20]
     harmless = [r["question"] for r in mmlu_records if r["lang"] == "en"][:20]
-    attack = AbliterationAttack(model, tok)
+    # select_directions=True runs a 36-layer generation sweep (17+ GiB). The
+    # middle-layer heuristic is sufficient for the attack smoke and fits L4.
+    cfg = RefusalDirectionConfig(select_directions=False)
+    attack = AbliterationAttack(model, tok, config=cfg)
     attack.fit(harmful_prompts=harmful, harmless_prompts=harmless)
     mode = "weight_orthogonalize"
     try:
@@ -278,6 +282,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--telemetry-repo", default=TELEMETRY_REPO)
     parser.add_argument("--n-per-pair", type=int, default=100)
     parser.add_argument("--max-seconds", type=int, default=3000)
+    parser.add_argument("--rmu-batches", type=int, default=60, help="Number of forget/retain batches for RMU unlearning (default 60)")
+    parser.add_argument("--rmu-alpha", type=float, default=300.0, help="RMU alpha steering penalty (default 300.0)")
     parser.add_argument("--skip", nargs="*", default=[], choices=["a", "b", "c", "d"])
     args = parser.parse_args(argv)
 
@@ -288,7 +294,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print("=" * 78, flush=True)
     print("ZOMBIE-WEIGHTS PHASE 2 ATTACK SWEEP", flush=True)
-    print(f"model={args.model} bench={args.bench_repo}", flush=True)
+    print(f"model={args.model} bench={args.bench_repo} rmu_batches={args.rmu_batches} alpha={args.rmu_alpha}", flush=True)
     print("=" * 78, flush=True)
 
     summary: dict = {
@@ -305,7 +311,15 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- RMU checkpoint ---------------------------------------------------
     timer.check("rmu", need=900)
-    rmu = run_rmu(args.model, args.bench_repo, workdir, telemetry, timer)
+    rmu = run_rmu(
+        args.model,
+        args.bench_repo,
+        workdir,
+        telemetry,
+        timer,
+        max_num_batches=args.rmu_batches,
+        alpha=args.rmu_alpha,
+    )
     ckpt = rmu["checkpoint"]
     summary["rmu"] = rmu
 
