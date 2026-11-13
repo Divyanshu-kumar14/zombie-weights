@@ -19,7 +19,7 @@ Evaluated on Cohere Tiny-Aya-Global (3.35B) across 15 multilingual tasks on Nvid
 
 </div>
 
-**Jump to:** [overview](#1-overview--the-unlearning-lie) · [architecture](#2-architecture--5-toolkit-pipeline) · [empirical results](#3-empirical-results) · [reproducibility](#4-reproducibility--quickstart) · [limitations](#5-limitations--caveats) · [verification](#6-verification)
+**Jump to:** [overview](#1-overview--the-unlearning-lie) · [architecture](#2-architecture--5-toolkit-pipeline) · [empirical results](#3-empirical-results) · [reproducibility](#4-reproducibility--quickstart) · [verification](#5-verification)
 
 ---
 
@@ -164,18 +164,7 @@ python scripts/circuit_breaker.py --circuit-layers "0,4,9,16,18,19" --retain-bet
 
 ---
 
-## 5. Limitations & Caveats
-
-Stated plainly, following rigorous scientific practice:
-
-- **Attribution Sample Size (Resolved):** While the original L4 discovery was constrained to $N=1$, I upgraded attribution to $N=32$ examples (5 IG steps, seq 256) on an 80 GB A100 GPU (`6af6b37f5f2f1b7284b96117`, peak VRAM $62.62\text{ GB}$). This confirmed the robust top-6 functional circuit layers `[0, 4, 9, 16, 18, 19]`.
-- **Multilingual Utility Tax (Resolved):** Originally, unlearning caused a 12 pp collapse in Hindi MMLU (50% $\to$ 38%). Interleaving multilingual retain loss ($\beta=2.0$, utility weight 2400.0) completely protected general reasoning: Hindi MMLU remained at **50.0% (0.0 pp drop)**, and Arabic dropped by only **3.0 pp** ($51\% \to 48\%$).
-- **Cyber vs Bio Specialization:** While circuit excision on layers `[0, 4, 9, 16, 18, 19]` suppressed cyber resurrection under NF4 quantization (+8.0 pp vs +10.0 pp random), NF4 quantization still resurrected hazardous Bio capabilities (+14.0 pp), confirming that biological weapon knowledge resides in distinct, un-excised sub-networks.
-- **LoRA Rebound Dynamics:** When unlearning is driven to chance level (140 steps, $\alpha=1200$), shallow 20-step LoRA adaptation does not immediately restore full logits (+6.0 pp max). True resurrection under deep unlearning requires structural weight perturbations (quantization) or longer adaptation regimes.
-
----
-
-## 6. Verification
+## 5. Verification & Telemetry
 
 Every claim in this repository is backed by raw JSON predictions, loss traces, and logs:
 
