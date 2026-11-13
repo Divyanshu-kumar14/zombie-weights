@@ -93,16 +93,6 @@ I ran all 10 GPU jobs on Nvidia L4 instances through Hugging Face Jobs:
 
 ---
 
-## 🎬 180-Second Pitch & Video Script
+## License
 
-### **[0:00 - 0:45] The Unlearning Lie**
-> *"When labs claim they have unlearned dangerous knowledge using representation misdirection, they usually haven't. I tested this on Cohere's 3.35B Tiny-Aya. In English, RMU appears to work, but the capability is still intact in what I call 'Zombie Weights'—dormant circuits that can be woken back up."*
-
-### **[0:45 - 1:30] Four Ways to Resurrect Capabilities**
-> *"I built an automated attack suite across four vectors: cross-lingual queries, 20 steps of benign LoRA fine-tuning with AlignTune, 4-bit NF4 quantization, and SafeTune abliteration. Removing the refusal steering vector alone brought back 9 percentage points of cyber capability. Standard unlearning is mostly surface veneer."*
-
-### **[1:30 - 2:30] Circuit Excision vs Random Layers**
-> *"To see if I could permanently disable the behavior, I used CircuitKIT to trace the attribution graph and identify the top-6 MLP circuit layers: 12, 20, 24, 27, 31, and 33. Restricting RMU to these layers kept resurrection capped at 8 percentage points, while an equal-budget random control resurrected by 10 percentage points under benign LoRA. But there's a trade-off: circuit intervention reduced Hindi and Arabic MMLU by up to 12 percentage points."*
-
-### **[2:30 - 3:00] The Unlearning MRI**
-> *"I deployed the Unlearning MRI on Hugging Face Spaces so anyone can audit the raw telemetry, test live multilingual probes, and inspect layer heatmaps. All code is open-source under Apache-2.0. Don't trust logit suppression—audit the weights."*
+This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for details.
