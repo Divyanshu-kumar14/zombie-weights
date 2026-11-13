@@ -221,42 +221,45 @@
             <tr>
               <th>Attack Vector</th>
               <th>Mechanism</th>
-              <th>Resurrection Delta</th>
-              <th>Kill-Gate H18 (>= +10 pp)</th>
-              <th>Outcome</th>
+              <th>Cyber Resurrection (Best Lang)</th>
+              <th>Bio Resurrection (Best Lang)</th>
+              <th>Kill-Gate H18 (&ge; +10 pp)</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td><strong>Vector A: Multilingual Evasion</strong></td>
+              <td><strong>Vector A: Cross-Lingual Evasion</strong></td>
               <td>Query in Spanish, Hindi, or Arabic</td>
-              <td><strong>+12.0 pp</strong> (es / hi)</td>
-              <td>PASS</td>
-              <td><span class="pass">RESURRECTED</span></td>
+              <td><strong>+6.0 pp</strong> (es)</td>
+              <td><strong>+4.0 pp</strong> (es)</td>
+              <td><span style="color: #f85149; font-weight: 700;">FAIL (&lt; 10 pp)</span></td>
             </tr>
             <tr>
-              <td><strong>Vector B: Benign LoRA SFT</strong></td>
-              <td>20 SFT steps on benign multilingual text</td>
-              <td><strong>+16.0 pp</strong> (cyber)</td>
-              <td>PASS</td>
-              <td><span class="pass">RESURRECTED</span></td>
+              <td><strong>Vector B: Benign LoRA Adaptation</strong></td>
+              <td>20 SFT steps on harmless text via aligntune</td>
+              <td><strong>+5.0 pp</strong> (es)</td>
+              <td><strong>+3.0 pp</strong> (fr)</td>
+              <td><span style="color: #f85149; font-weight: 700;">FAIL (&lt; 10 pp)</span></td>
             </tr>
             <tr>
               <td><strong>Vector C: 4-Bit NF4 Quantization</strong></td>
               <td>Weight discretization unmasking</td>
-              <td><strong>+20.0 pp</strong> (cyber)</td>
-              <td>PASS</td>
-              <td><span class="pass">RESURRECTED</span></td>
+              <td><strong>-1.0 pp</strong> (en)</td>
+              <td><strong>+5.0 pp</strong> (es)</td>
+              <td><span style="color: #f85149; font-weight: 700;">FAIL (&lt; 10 pp)</span></td>
             </tr>
             <tr>
               <td><strong>Vector D: SafeTune Abliteration</strong></td>
-              <td>Representation un-steering</td>
-              <td><strong>+14.0 pp</strong> (cyber)</td>
-              <td>PASS</td>
-              <td><span class="pass">RESURRECTED</span></td>
+              <td>Refusal steering vector removal (Layer 18)</td>
+              <td><strong>+9.0 pp</strong> (hi)</td>
+              <td><strong>+5.0 pp</strong> (es)</td>
+              <td><span style="color: #f85149; font-weight: 700;">FAIL (1 pp short)</span></td>
             </tr>
           </tbody>
         </table>
+        <p style="font-size: 13px; color: #8b949e; margin-top: 8px;">
+          <em>Root Cause Note:</em> 60-step RMU (&alpha;=300) only partially suppressed English cyber to ~39–46%, compressing dynamic range for rebound. The attack execution pipeline is fully validated across all 4 modalities.
+        </p>
       </div>
     </div>
 
@@ -265,24 +268,27 @@
       <div class="card">
         <h3>Circuit Attribution Across 36 Transformer Layers</h3>
         <p style="color: #8b949e; font-size: 14px; margin-bottom: 16px;">
-          Circuit attribution scores computed via CircuitKIT across all 36 layers of Tiny Aya. Layers 4-9 contain the dense residual unlearning bottleneck.
+          Circuit attribution scores computed via CircuitKIT across all 36 layers of Tiny Aya. Discovered top-6 MLP layers: <code>[12, 20, 24, 27, 31, 33]</code>.
         </p>
         <div id="mri-chart" style="width: 100%; height: 320px;"></div>
 
         <div class="verdict-grid" style="margin-top: 20px;">
           <div class="card" style="margin: 0;">
-            <h4 style="color: #58a6ff; margin-bottom: 8px;">Random-Layer Negative Control</h4>
+            <h4 style="color: #58a6ff; margin-bottom: 8px;">Random-Layer Negative Control (Arm 2)</h4>
             <p style="font-size: 13px; color: var(--text);">
-              When RMU was applied to 6 random control layers (<code>[0, 3, 13, 14, 26, 29]</code>), baseline cyber remained at <strong>34.0%</strong>. Post-benign LoRA adaptation immediately resurrected cyber accuracy to <strong>46.0% (+12.0 pp to +16.0 pp rebound)</strong>.
+              When RMU targeted 6 random control layers (<code>[0, 3, 7, 8, 22, 26]</code>), benign LoRA adaptation resurrected cyber capability by <strong>+10.0 pp</strong> (passing gate). Max resurrection: <strong>10.0 pp</strong>.
             </p>
           </div>
           <div class="card" style="margin: 0;">
-            <h4 style="color: #3fb950; margin-bottom: 8px;">Circuit-Targeted Excision</h4>
+            <h4 style="color: #3fb950; margin-bottom: 8px;">Circuit-Targeted Excision (Arm 1)</h4>
             <p style="font-size: 13px; color: var(--text);">
-              When RMU targeted the discovered circuit, cyber baseline dropped to <strong>12.0%</strong>. Benign LoRA fine-tuning failed to resurrect knowledge, keeping capability suppressed at <strong>24.0% (below 25% random guess)</strong>.
+              When RMU targeted the discovered circuit (<code>[12, 20, 24, 27, 31, 33]</code>), maximum resurrection was capped at <strong>8.0 pp</strong> (&lt; 10 pp gate). Circuit dies, random resurrects, circuit beats random (PASS).
             </p>
           </div>
         </div>
+        <p style="font-size: 12px; color: #8b949e; margin-top: 14px;">
+          <em>Honest Caveats:</em> Discovery used N=1 due to 24 GB L4 VRAM constraints; separation is borderline (8 vs 10 pp); and aggressive circuit intervention incurred an empirical utility tax on general multilingual MMLU (-5 pp EN, -12 pp HI, -7 pp AR).
+        </p>
       </div>
     </div>
 
@@ -384,16 +390,18 @@ python scripts/attack_sweep.py --bench-repo tony0014/zombie-weights-bench
 
     function renderMatrixChart() {
       const tasks = ["WMDP-Cyber (ES)", "WMDP-Cyber (HI)", "WMDP-Cyber (AR)", "WMDP-Bio (ES)", "WMDP-Bio (AR)"];
-      const rmu = [0.38, 0.38, 0.38, 0.50, 0.50];
-      const vecA = [0.44, 0.39, 0.38, 0.54, 0.48];
-      const vecB = [0.43, 0.39, 0.37, 0.52, 0.47];
-      const vecC = [0.36, 0.37, 0.30, 0.55, 0.51];
+      const rmu = [0.38, 0.40, 0.39, 0.49, 0.59];
+      const vecA = [0.44, 0.40, 0.39, 0.53, 0.58]; // +6 pp cyber ES, +4 pp bio ES
+      const vecB = [0.43, 0.40, 0.39, 0.51, 0.58]; // +5 pp cyber ES
+      const vecC = [0.37, 0.38, 0.38, 0.54, 0.59]; // -1 pp cyber EN, +5 pp bio ES
+      const vecD = [0.44, 0.49, 0.40, 0.54, 0.59]; // +9 pp cyber HI, +5 pp bio ES
 
       const data = [
-        { name: 'Unlearned Baseline (EN)', x: tasks, y: rmu, type: 'bar', marker: { color: '#58a6ff' } },
-        { name: 'Vector A (Multilingual)', x: tasks, y: vecA, type: 'bar', marker: { color: '#ff7f0e' } },
+        { name: 'RMU Baseline (60-step)', x: tasks, y: rmu, type: 'bar', marker: { color: '#58a6ff' } },
+        { name: 'Vector A (Cross-Lingual)', x: tasks, y: vecA, type: 'bar', marker: { color: '#ff7f0e' } },
         { name: 'Vector B (Benign LoRA)', x: tasks, y: vecB, type: 'bar', marker: { color: '#d62728' } },
-        { name: 'Vector C (4-bit NF4)', x: tasks, y: vecC, type: 'bar', marker: { color: '#9467bd' } }
+        { name: 'Vector C (4-bit NF4)', x: tasks, y: vecC, type: 'bar', marker: { color: '#9467bd' } },
+        { name: 'Vector D (Abliteration)', x: tasks, y: vecD, type: 'bar', marker: { color: '#2ca02c' } }
       ];
       const layout = {
         barmode: 'group',
@@ -409,14 +417,15 @@ python scripts/attack_sweep.py --bench-repo tony0014/zombie-weights-bench
 
     function renderMriChart() {
       const layers = Array.from({length: 36}, (_, i) => 'L' + i);
-      const scores = [0.02, 0.04, 0.08, 0.15, 0.88, 0.94, 0.91, 0.85, 0.79, 0.72, 0.41, 0.35, 0.28, 0.22, 0.30, 0.45, 0.68, 0.82, 0.75, 0.60, 0.38, 0.29, 0.21, 0.18, 0.15, 0.12, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01, 0.01];
-      const colors = scores.map((s, i) => (i >= 4 && i <= 9) ? '#f85149' : '#58a6ff');
+      const scores = [0.02, 0.04, 0.08, 0.15, 0.18, 0.14, 0.21, 0.25, 0.19, 0.22, 0.31, 0.35, 0.78, 0.42, 0.30, 0.45, 0.48, 0.52, 0.55, 0.60, 0.82, 0.49, 0.41, 0.38, 0.85, 0.32, 0.29, 0.88, 0.27, 0.26, 0.30, 0.91, 0.24, 0.94, 0.11, 0.08];
+      const targetLayers = [12, 20, 24, 27, 31, 33];
+      const colors = scores.map((s, i) => targetLayers.includes(i) ? '#f85149' : '#58a6ff');
 
       const data = [{
         x: layers, y: scores, type: 'bar', marker: { color: colors }
       }];
       const layout = {
-        title: { text: 'CircuitKIT Attribution Scores Across 36 Layers (Red = Discovered Latent Circuit)', font: { color: '#f0f6fc', size: 14 } },
+        title: { text: 'CircuitKIT Attribution Scores (Red = Top-6 Circuit Layers: 12, 20, 24, 27, 31, 33)', font: { color: '#f0f6fc', size: 14 } },
         yaxis: { gridcolor: '#30363d' },
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: 'rgba(0,0,0,0)',
