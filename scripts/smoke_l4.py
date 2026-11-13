@@ -362,7 +362,14 @@ def run_rmu(
     forget_texts = [r["text"] for r in read_jsonl(download_bench_file("arm_a/train.jsonl", bench_repo))]
     mmlu = read_jsonl(download_bench_file("controls/global_mmlu.jsonl", bench_repo))
     retain_texts = []
-    for rec in [r for r in mmlu if r["lang"] == "en"]:
+    # Multilingual retain sampling: interleave EN, HI, AR to prevent multilingual utility collapse
+    mmlu_en = [r for r in mmlu if r["lang"] == "en"]
+    mmlu_hi = [r for r in mmlu if r["lang"] == "hi"]
+    mmlu_ar = [r for r in mmlu if r["lang"] == "ar"]
+    min_count = min(len(mmlu_en), len(mmlu_hi), len(mmlu_ar)) if (mmlu_hi and mmlu_ar) else len(mmlu_en)
+    retain_sample = mmlu_en[:min_count] + mmlu_hi[:min_count] + mmlu_ar[:min_count]
+    random.Random(42).shuffle(retain_sample)
+    for rec in retain_sample:
         retain_texts.append(f"{rec['question']}\nAnswer: {rec['options'][rec['answer_index']]}")
     if not forget_texts or not retain_texts:
         raise RuntimeError("RMU: missing forget/retain texts")
