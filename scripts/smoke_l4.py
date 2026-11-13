@@ -33,7 +33,8 @@ import traceback
 from pathlib import Path
 
 LETTERS = ("A", "B", "C", "D")
-COST_PER_HOUR = 0.80
+# l4x1 = $0.80/h, a100-large = $2.50/h; set ZW_COST_PER_HOUR on non-L4 jobs.
+COST_PER_HOUR = float(os.environ.get("ZW_COST_PER_HOUR", "0.80"))
 DEFAULT_MODEL = "CohereLabs/tiny-aya-global"
 BENCH_REPO = "tony0014/zombie-weights-bench"
 TELEMETRY_REPO = "tony0014/zombie-weights-telemetry"
@@ -312,6 +313,81 @@ def make_batches(texts: list[str], tok, n: int, max_len: int = 640) -> list[dict
     return batches
 
 
+def _rmu_utility_retain_loop(
+    model,
+    frozen_model,
+    forget_batches: list[dict],
+    retain_batches: list[dict],
+    utility_batches: list[dict],
+    *,
+    layer_id: int,
+    params: list,
+    lr: float,
+    alpha: float,
+    beta: float,
+    steering_coeff: float = 20.0,
+    max_num_batches: int | None = None,
+) -> tuple[int, list[dict]]:
+    """RMU with a second, utility-protecting retain stream.
+
+    Extends the authors' objective (``MSE_forget + alpha * MSE_retain``) with
+    ``beta * alpha * MSE_utility`` over multilingual MMLU + benign prose.
+    ``beta`` is therefore relative to the base RMU retain weight and the
+    effective coefficient is recorded in telemetry. Math (control vector,
+    forward hook, AdamW step) mirrors SafeTune 0.1.18 ``rmu_unlearn`` exactly;
+    only the extra term differs.
+    """
+    import torch
+    import torch.nn.functional as F
+    from safetune._refusal_helpers import _get_decoder_layers
+    from safetune.interventions.unlearn.rmu import _forward_with_cache
+
+    updated_module = _get_decoder_layers(model)[layer_id]
+    frozen_module = _get_decoder_layers(frozen_model)[layer_id]
+
+    ref_param = params[0]
+    hidden_size = getattr(getattr(model, "config", None), "hidden_size", None) or ref_param.shape[0]
+    random_vector = torch.rand(1, 1, hidden_size, dtype=ref_param.dtype, device=ref_param.device)
+    control_vec = random_vector / torch.norm(random_vector) * steering_coeff
+
+    optimizer = torch.optim.AdamW(params, lr=lr)
+    trace: list[dict] = []
+    steps = 0
+    for forget_batch, retain_batch, utility_batch in zip(forget_batches, retain_batches, utility_batches):
+        if max_num_batches is not None and steps >= max_num_batches:
+            break
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            act_forget = _forward_with_cache(model, forget_batch, updated_module, no_grad=False)
+            forget_loss = F.mse_loss(act_forget, control_vec.expand_as(act_forget).to(act_forget.dtype))
+
+            act_retain = _forward_with_cache(model, retain_batch, updated_module, no_grad=False)
+            act_retain_frozen = _forward_with_cache(frozen_model, retain_batch, frozen_module, no_grad=True)
+            retain_loss = alpha * F.mse_loss(act_retain, act_retain_frozen.to(act_retain.dtype))
+
+            act_utility = _forward_with_cache(model, utility_batch, updated_module, no_grad=False)
+            act_utility_frozen = _forward_with_cache(frozen_model, utility_batch, frozen_module, no_grad=True)
+            utility_loss = (alpha * beta) * F.mse_loss(act_utility, act_utility_frozen.to(act_utility.dtype))
+
+            loss = forget_loss + retain_loss + utility_loss
+
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+        steps += 1
+        trace.append(
+            {
+                "step": steps,
+                "loss": round(float(loss.item()), 6),
+                "forget": round(float(forget_loss.item()), 6),
+                "retain": round(float(retain_loss.item()), 6),
+                "utility": round(float(utility_loss.item()), 6),
+            }
+        )
+        if steps == 1 or steps % 20 == 0:
+            print(f"[rmu] step {steps}/{max_num_batches} {trace[-1]}", flush=True)
+    return steps, trace
+
+
 def run_rmu(
     model_name: str,
     bench_repo: str,
@@ -325,6 +401,8 @@ def run_rmu(
     ckpt_name: str = "rmu_ckpt",
     telemetry_name: str = "rmu.json",
     vram_cap_gb: float = 21.0,
+    retain_extra_texts: list[str] | None = None,
+    retain_beta: float = 0.0,
 ) -> dict:
     timer.check("rmu", need=600)
     import torch
@@ -376,19 +454,48 @@ def run_rmu(
 
     forget_batches = make_batches(forget_texts, tok, n=max_num_batches, max_len=max_len)
     retain_batches = make_batches(retain_texts, tok, n=max_num_batches, max_len=max_len)
+    utility_batches: list[dict] = []
+    utility_retain_weight = 0.0
+    if retain_extra_texts and retain_beta > 0:
+        utility_batches = make_batches(retain_extra_texts, tok, n=max_num_batches, max_len=max_len)
+        utility_retain_weight = alpha * retain_beta
 
-    trainer = RMUTrainer(
-        model,
-        layer_id=layer_id,
-        update_layer_ids=update_layer_ids,
-        max_num_batches=max_num_batches,
-        lr=lr,
-        alpha=alpha,
-        upcast=False,
-    )
+    loss_trace: list[dict] = []
+    trainer = None
+    steps_done = None
     try:
-        with torch.autocast("cuda", dtype=torch.bfloat16):
-            updated = trainer.unlearn(forget=forget_batches, retain=retain_batches, frozen_model=frozen)
+        if utility_batches:
+            print(
+                f"[rmu] utility-retain stream: n={len(utility_batches)} "
+                f"beta={retain_beta} (effective weight={utility_retain_weight})",
+                flush=True,
+            )
+            steps_done, loss_trace = _rmu_utility_retain_loop(
+                model,
+                frozen,
+                forget_batches,
+                retain_batches,
+                utility_batches,
+                layer_id=layer_id,
+                params=[p for p in model.parameters() if p.requires_grad],
+                lr=lr,
+                alpha=alpha,
+                beta=retain_beta,
+                max_num_batches=max_num_batches,
+            )
+            updated = model
+        else:
+            trainer = RMUTrainer(
+                model,
+                layer_id=layer_id,
+                update_layer_ids=update_layer_ids,
+                max_num_batches=max_num_batches,
+                lr=lr,
+                alpha=alpha,
+                upcast=False,
+            )
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                updated = trainer.unlearn(forget=forget_batches, retain=retain_batches, frozen_model=frozen)
     except Exception:
         try:
             model.to("cpu")
@@ -419,7 +526,13 @@ def run_rmu(
         "phase": "rmu",
         "model": model_name,
         "steps": max_num_batches,
+        "steps_completed": int(steps_done) if utility_batches else max_num_batches,
         "alpha": alpha,
+        "retain_beta": retain_beta,
+        "utility_retain_weight": utility_retain_weight,
+        "utility_retain_n": len(utility_batches),
+        "loss_trace_head": loss_trace[:3],
+        "loss_trace_tail": loss_trace[-3:],
         "lr": lr,
         "layer_id": layer_id,
         "max_len": max_len,

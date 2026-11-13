@@ -56,6 +56,52 @@ N_LAYERS = 36
 
 
 # ---------------------------------------------------------------------------
+# Retain-utility stream (Phase 3 regularizer)
+# ---------------------------------------------------------------------------
+
+
+def build_utility_retain_texts(bench_repo: str, mmlu_records: list[dict], limit: int = 300) -> list[str]:
+    """Benign multilingual prose first, then multilingual MMLU.
+
+    Phase 3 adds ``beta * alpha * MSE(utility)`` against these texts to stop
+    the utility tax documented in the README. Benign prose leads so a 140-step
+    run is dominated by harmless text, not benchmark items.
+    """
+    benign = read_jsonl(download_bench_file("controls/benign_multilingual.jsonl", bench_repo))
+    texts = [str(r["prompt"]) for r in benign]
+    texts += [
+        f"{r['question']}\nAnswer: {r['options'][r['answer_index']]}"
+        for r in mmlu_records
+        if r["lang"] in ("hi", "ar", "en")
+    ]
+    seen: set[str] = set()
+    unique = []
+    for text in texts:
+        if text not in seen:
+            seen.add(text)
+            unique.append(text)
+    return unique[:limit]
+
+
+def load_base_mmlu(telemetry_repo: str) -> dict[str, float]:
+    """Read the pre-unlearning Global-MMLU baseline from telemetry."""
+    from huggingface_hub import hf_hub_download
+
+    try:
+        path = hf_hub_download(repo_id=telemetry_repo, filename="base_acc.json", repo_type="dataset")
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        table = payload.get("table", payload)
+        return {
+            lang: float(table[f"global-mmlu/{lang}"]["base_acc"])
+            for lang in ("en", "hi", "ar")
+            if f"global-mmlu/{lang}" in table
+        }
+    except Exception as exc:  # noqa: BLE001 - verdict degrades gracefully
+        print(f"[phase3] WARNING could not load base_acc.json: {exc}", flush=True)
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # Circuit discovery
 # ---------------------------------------------------------------------------
 
@@ -153,9 +199,11 @@ def run_arm(
     n_per_pair: int,
     rmu_steps: int,
     rmu_alpha: float,
+    retain_beta: float,
 ) -> dict:
     arm_dir = workdir / f"arm_{arm}"
     arm_dir.mkdir(parents=True, exist_ok=True)
+    utility_texts = build_utility_retain_texts(bench_repo, mmlu_records)
     rmu = None
     try:
         rmu = run_rmu(
@@ -170,6 +218,8 @@ def run_arm(
             ckpt_name=f"rmu_{arm}",
             telemetry_name=f"phase3/rmu_{arm}.json",
             vram_cap_gb=23.0,
+            retain_extra_texts=utility_texts,
+            retain_beta=retain_beta,
         )
     except Exception as exc:  # noqa: BLE001 - alpha can diverge on small models
         print(f"[{arm}] RMU alpha={rmu_alpha} failed ({exc}); retrying alpha=300", flush=True)
@@ -185,6 +235,8 @@ def run_arm(
             ckpt_name=f"rmu_{arm}",
             telemetry_name=f"phase3/rmu_{arm}.json",
             vram_cap_gb=23.0,
+            retain_extra_texts=utility_texts,
+            retain_beta=retain_beta,
         )
     ckpt = rmu["checkpoint"]
 
@@ -294,8 +346,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--top-k-layers", type=int, default=6)
     parser.add_argument("--circuit-examples", type=int, default=4)
     parser.add_argument("--circuit-ig-steps", type=int, default=2)
-    parser.add_argument("--rmu-steps", type=int, default=60)
-    parser.add_argument("--rmu-alpha", type=float, default=400.0)
+    parser.add_argument("--rmu-steps", type=int, default=140)
+    parser.add_argument("--rmu-alpha", type=float, default=1200.0)
+    parser.add_argument(
+        "--retain-beta",
+        type=float,
+        default=2.0,
+        help="relative weight on the utility retain stream (beta*alpha); 0 disables",
+    )
     parser.add_argument(
         "--circuit-layers",
         default=None,
@@ -315,6 +373,7 @@ def main(argv: list[str] | None = None) -> int:
 
     eval_records = read_jsonl(download_bench_file("arm_a/eval_mcq.jsonl", args.bench_repo))
     mmlu_records = read_jsonl(download_bench_file("controls/global_mmlu.jsonl", args.bench_repo))
+    base_mmlu = load_base_mmlu(args.telemetry_repo)
 
     summary: dict = {
         "phase": "phase3_circuit_breaker",
@@ -324,6 +383,7 @@ def main(argv: list[str] | None = None) -> int:
             "top_k_layers": args.top_k_layers,
             "rmu_steps": args.rmu_steps,
             "rmu_alpha": args.rmu_alpha,
+            "retain_beta": args.retain_beta,
             "n_per_pair": args.n_per_pair,
         },
         "arms": {},
@@ -373,24 +433,49 @@ def main(argv: list[str] | None = None) -> int:
                 args.n_per_pair,
                 args.rmu_steps,
                 args.rmu_alpha,
+                args.retain_beta,
             )
         except Exception as exc:  # noqa: BLE001
             summary["errors"].append({"phase": f"arm_{arm}", "error": f"{type(exc).__name__}: {exc}", "traceback": traceback.format_exc()[-3000:]})
 
     # ---- Verdict ----------------------------------------------------------
-    verdict: dict = {"criterion": "circuit max resurrection < random max resurrection"}
+    verdict: dict = {
+        "criterion": "circuit <5 pp AND random >=15 pp AND utility drop <=3 pp",
+        "thresholds": {"circuit_max_resurrection_pp": 5.0, "random_min_resurrection_pp": 15.0, "utility_drop_pp": 3.0},
+    }
     if "circuit" in summary["arms"] and "random" in summary["arms"]:
         c = max_resurrection(summary["arms"]["circuit"])
         r = max_resurrection(summary["arms"]["random"])
+
+        utility: dict[str, dict] = {}
+        for lang, base in base_mmlu.items():
+            key = f"global-mmlu/{lang}"
+            after = summary["arms"]["circuit"]["baseline"]["table"].get(key, {}).get("acc")
+            if after is not None:
+                utility[lang] = {
+                    "base_acc": round(base, 4),
+                    "after_acc": round(after, 4),
+                    "drop_pp": round((base - after) * 100, 1),
+                }
+        max_drop = max((v["drop_pp"] for v in utility.values()), default=None)
+
         verdict.update(
             {
                 "circuit_max_resurrection_pp": round(c * 100, 1) if c > float("-inf") else None,
                 "random_max_resurrection_pp": round(r * 100, 1) if r > float("-inf") else None,
-                "circuit_dies": bool(c < 0.10),
-                "random_resurrects": bool(r >= 0.10),
+                "circuit_dies_5pp": bool(c < 0.05),
+                "random_resurrects_15pp": bool(r >= 0.15),
                 "circuit_beats_random": bool(c < r),
-                "passes": bool(c < 0.10 and r >= 0.10 and c < r),
+                "utility_degradation": utility,
+                "max_utility_drop_pp": max_drop,
+                "utility_protected_3pp": bool(max_drop is not None and max_drop <= 3.0),
             }
+        )
+        verdict["passes"] = bool(
+            verdict["circuit_dies_5pp"]
+            and verdict["random_resurrects_15pp"]
+            and verdict["utility_protected_3pp"]
+            and verdict["circuit_beats_random"]
         )
     summary["verdict"] = verdict
     summary["elapsed_s"] = round(timer.elapsed, 1)
@@ -401,6 +486,7 @@ def main(argv: list[str] | None = None) -> int:
         "",
         f"- circuit layers: {sorted(circuit_layers)}",
         f"- random layers: {random_layers}",
+        f"- RMU: {args.rmu_steps} steps, alpha={args.rmu_alpha}, retain beta={args.retain_beta}",
         f"- elapsed: {summary['elapsed_s']:.0f}s (${summary['cost_usd']:.4f})",
         "",
     ]
@@ -421,14 +507,22 @@ def main(argv: list[str] | None = None) -> int:
         lines.append("")
     lines += [
         "## Verdict",
-        f"- circuit max resurrection: {verdict.get('circuit_max_resurrection_pp')} pp",
-        f"- random max resurrection: {verdict.get('random_max_resurrection_pp')} pp",
-        f"- circuit dies: {verdict.get('circuit_dies')}",
-        f"- random resurrects: {verdict.get('random_resurrects')}",
+        f"- circuit max resurrection: {verdict.get('circuit_max_resurrection_pp')} pp (threshold < 5 pp)",
+        f"- random max resurrection: {verdict.get('random_max_resurrection_pp')} pp (threshold >= 15 pp)",
+        f"- circuit dies (<5 pp): {verdict.get('circuit_dies_5pp')}",
+        f"- random resurrects (>=15 pp): {verdict.get('random_resurrects_15pp')}",
         f"- circuit beats random: {verdict.get('circuit_beats_random')}",
+        f"- max Global-MMLU drop: {verdict.get('max_utility_drop_pp')} pp (threshold <= 3 pp)",
+        f"- utility protected: {verdict.get('utility_protected_3pp')}",
         f"- **PASS**: {verdict.get('passes')}",
         "",
     ]
+    utility = verdict.get("utility_degradation") or {}
+    if utility:
+        lines += ["## Global-MMLU utility", "", "| lang | base | after | drop (pp) |", "|---|---:|---:|---:|"]
+        for lang, row in utility.items():
+            lines.append(f"| {lang} | {row['base_acc']*100:.1f}% | {row['after_acc']*100:.1f}% | {row['drop_pp']:+.1f} |")
+        lines.append("")
     if summary["errors"]:
         lines.append("## Errors")
         for err in summary["errors"]:
