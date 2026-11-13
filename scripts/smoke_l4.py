@@ -312,7 +312,20 @@ def make_batches(texts: list[str], tok, n: int, max_len: int = 640) -> list[dict
     return batches
 
 
-def run_rmu(model_name: str, bench_repo: str, workdir: Path, telemetry: Telemetry, timer: Timer) -> dict:
+def run_rmu(
+    model_name: str,
+    bench_repo: str,
+    workdir: Path,
+    telemetry: Telemetry,
+    timer: Timer,
+    update_layer_ids: tuple[int, ...] = (5, 6, 7),
+    max_num_batches: int = 10,
+    alpha: float = 100.0,
+    lr: float = 5e-5,
+    ckpt_name: str = "rmu_ckpt",
+    telemetry_name: str = "rmu.json",
+    vram_cap_gb: float = 21.0,
+) -> dict:
     timer.check("rmu", need=600)
     import torch
     from safetune.runner.unlearn import RMUTrainer
@@ -321,7 +334,8 @@ def run_rmu(model_name: str, bench_repo: str, workdir: Path, telemetry: Telemetr
     reset_gpu_peak()
     t0 = time.time()
     max_len = 640
-    update_layer_ids = [5, 6, 7]
+    update_layer_ids = list(update_layer_ids)
+    layer_id = max(update_layer_ids)
 
     tok = AutoTokenizer.from_pretrained(model_name)
     if tok.pad_token is None:
@@ -343,30 +357,39 @@ def run_rmu(model_name: str, bench_repo: str, workdir: Path, telemetry: Telemetr
             param.requires_grad_(False)
 
     if not before:
-        raise RuntimeError("RMU smoke: no update parameters matched layers 5-7 down_proj")
+        raise RuntimeError(f"RMU: no update parameters matched layers {update_layer_ids} down_proj")
 
-    forget_texts = [r["text"] for r in read_jsonl(download_bench_file("arm_a/train.jsonl", bench_repo))][:10]
+    forget_texts = [r["text"] for r in read_jsonl(download_bench_file("arm_a/train.jsonl", bench_repo))]
     mmlu = read_jsonl(download_bench_file("controls/global_mmlu.jsonl", bench_repo))
     retain_texts = []
-    for rec in [r for r in mmlu if r["lang"] == "en"][:10]:
+    for rec in [r for r in mmlu if r["lang"] == "en"]:
         retain_texts.append(f"{rec['question']}\nAnswer: {rec['options'][rec['answer_index']]}")
     if not forget_texts or not retain_texts:
-        raise RuntimeError("RMU smoke: missing forget/retain texts")
+        raise RuntimeError("RMU: missing forget/retain texts")
 
-    forget_batches = make_batches(forget_texts, tok, n=10, max_len=max_len)
-    retain_batches = make_batches(retain_texts, tok, n=10, max_len=max_len)
+    forget_batches = make_batches(forget_texts, tok, n=max_num_batches, max_len=max_len)
+    retain_batches = make_batches(retain_texts, tok, n=max_num_batches, max_len=max_len)
 
     trainer = RMUTrainer(
         model,
-        layer_id=7,
+        layer_id=layer_id,
         update_layer_ids=update_layer_ids,
-        max_num_batches=10,
-        lr=5e-5,
-        alpha=100.0,
+        max_num_batches=max_num_batches,
+        lr=lr,
+        alpha=alpha,
         upcast=False,
     )
-    with torch.autocast("cuda", dtype=torch.bfloat16):
-        updated = trainer.unlearn(forget=forget_batches, retain=retain_batches, frozen_model=frozen)
+    try:
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            updated = trainer.unlearn(forget=forget_batches, retain=retain_batches, frozen_model=frozen)
+    except Exception:
+        try:
+            model.to("cpu")
+            frozen.to("cpu")
+            torch.cuda.empty_cache()
+        except Exception:  # noqa: BLE001
+            pass
+        raise
 
     deltas = {}
     for name, param in updated.named_parameters():
@@ -376,11 +399,11 @@ def run_rmu(model_name: str, bench_repo: str, workdir: Path, telemetry: Telemetr
     peak = gpu_peak_gb()
 
     if total_delta <= 0:
-        raise AssertionError(f"RMU smoke failed: ||W_after - W_before||_2 == 0 ({deltas})")
-    if peak >= 21.0:
-        raise AssertionError(f"RMU smoke failed: peak VRAM {peak:.2f} GB >= 21 GB")
+        raise AssertionError(f"RMU failed: ||W_after - W_before||_2 == 0 ({deltas})")
+    if peak >= vram_cap_gb:
+        raise AssertionError(f"RMU failed: peak VRAM {peak:.2f} GB >= {vram_cap_gb} GB")
 
-    ckpt = workdir / "rmu_ckpt"
+    ckpt = workdir / ckpt_name
     ckpt.mkdir(parents=True, exist_ok=True)
     updated.save_pretrained(str(ckpt), safe_serialization=True)
     tok.save_pretrained(str(ckpt))
@@ -388,7 +411,10 @@ def run_rmu(model_name: str, bench_repo: str, workdir: Path, telemetry: Telemetr
     result = {
         "phase": "rmu",
         "model": model_name,
-        "steps": 10,
+        "steps": max_num_batches,
+        "alpha": alpha,
+        "lr": lr,
+        "layer_id": layer_id,
         "max_len": max_len,
         "update_layer_ids": update_layer_ids,
         "delta_w_l2_total": total_delta,
@@ -397,7 +423,7 @@ def run_rmu(model_name: str, bench_repo: str, workdir: Path, telemetry: Telemetr
         "checkpoint": str(ckpt),
         "elapsed_s": round(time.time() - t0, 1),
     }
-    telemetry.push_json("rmu.json", result)
+    telemetry.push_json(telemetry_name, result)
     try:
         model.to("cpu")
         frozen.to("cpu")
