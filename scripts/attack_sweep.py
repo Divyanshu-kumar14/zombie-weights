@@ -252,20 +252,30 @@ print("ATTACK_B_RESULT " + json.dumps(result, default=str)[:3000])
 def run_abliteration(model, tok, eval_records, mmlu_records) -> dict:
     from safetune.instrumentation.evaluate.redteam.abliteration import AbliterationAttack
     from safetune.interventions.steer.refusal_direction import RefusalDirectionConfig
+    import safetune.core.runtime.inference.vector_extraction as ve
 
-    harmful = [r["question"] for r in eval_records if r["dataset"] == "wmdp-cyber"][:20]
-    harmless = [r["question"] for r in mmlu_records if r["lang"] == "en"][:20]
-    # select_directions=True runs a 36-layer generation sweep (17+ GiB). The
-    # middle-layer heuristic is sufficient for the attack smoke and fits L4.
-    cfg = RefusalDirectionConfig(select_directions=False)
+    # Patch extractor to batch_size=1 to prevent large lm_head logits allocation on Cohere's 256k vocab
+    _orig_init = ve.SteeringVectorExtractor.__init__
+    def _patched_init(self, m, t, config=None):
+        _orig_init(self, m, t, config)
+        self.config.batch_size = 1
+    ve.SteeringVectorExtractor.__init__ = _patched_init
+
+    # Truncate prompts to 128 chars to keep sequence length short (<40 tokens)
+    harmful = [r["question"][:128] for r in eval_records if r["dataset"] == "wmdp-cyber"][:10]
+    harmless = [r["question"][:128] for r in mmlu_records if r["lang"] == "en"][:10]
+
+    # Target middle layer (layer 18 of 36) without multi-layer sweeps
+    cfg = RefusalDirectionConfig(select_directions=False, target_layers=[18], pick_layer=18)
     attack = AbliterationAttack(model, tok, config=cfg)
     attack.fit(harmful_prompts=harmful, harmless_prompts=harmless)
-    mode = "weight_orthogonalize"
+    # runtime_ablate projects the refusal direction out of activations via hooks
+    mode = "runtime_ablate"
     try:
         attack.run(mode=mode)
-    except Exception as exc:  # noqa: BLE001 - fall back to reversible runtime hooks
-        print(f"[attack-d] weight_orthogonalize failed ({exc}); trying runtime_ablate", flush=True)
-        mode = "runtime_ablate"
+    except Exception as exc:  # noqa: BLE001 - fall back to weight orthogonalization
+        print(f"[attack-d] runtime_ablate failed ({exc}); trying weight_orthogonalize", flush=True)
+        mode = "weight_orthogonalize"
         attack.run(mode=mode)
     return {"mode": mode, "attack": attack}
 

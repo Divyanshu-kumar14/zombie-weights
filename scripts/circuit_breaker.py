@@ -180,6 +180,7 @@ def run_arm(
     ids = letter_token_ids(tok)
     baseline = evaluate(model, tok, eval_records, mmlu_records, n_per_pair, ids)
     free_cuda(model, tok)
+    model = tok = None
     telemetry.push_json(f"phase3/{arm}_baseline.json", baseline)
 
     result: dict = {
@@ -204,6 +205,7 @@ def run_arm(
         ids = letter_token_ids(tok)
         res = evaluate(model, tok, eval_records, mmlu_records, n_per_pair, ids)
         free_cuda(model, tok)
+        model = tok = None
         telemetry.push_json(f"phase3/{arm}_attack_b_eval.json", res)
         result["attacks"]["b_benign_lora"] = {"resurrection": resurrection_scores(baseline["table"], res["table"])}
     except Exception as exc:  # noqa: BLE001
@@ -216,6 +218,14 @@ def run_arm(
         ids = letter_token_ids(tok)
         res = evaluate(model, tok, eval_records, mmlu_records, n_per_pair, ids)
         free_cuda(model, tok)
+        model = tok = None
+        import gc
+        gc.collect()
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
         telemetry.push_json(f"phase3/{arm}_attack_c_eval.json", res)
         result["attacks"]["c_nf4"] = {"resurrection": resurrection_scores(baseline["table"], res["table"])}
     except Exception as exc:  # noqa: BLE001
@@ -272,8 +282,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--top-k-layers", type=int, default=6)
     parser.add_argument("--circuit-examples", type=int, default=4)
     parser.add_argument("--circuit-ig-steps", type=int, default=2)
-    parser.add_argument("--rmu-steps", type=int, default=80)
-    parser.add_argument("--rmu-alpha", type=float, default=1200.0)
+    parser.add_argument("--rmu-steps", type=int, default=60)
+    parser.add_argument("--rmu-alpha", type=float, default=400.0)
     parser.add_argument("--max-seconds", type=int, default=3300)
     args = parser.parse_args(argv)
 
