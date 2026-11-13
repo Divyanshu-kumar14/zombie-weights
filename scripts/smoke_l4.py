@@ -148,13 +148,22 @@ def reset_gpu_peak() -> None:
 
 
 def free_cuda(*objs) -> None:
+    import gc
     import torch
 
     for obj in objs:
-        del obj
+        if obj is not None and hasattr(obj, "to"):
+            try:
+                obj.to("cpu")
+            except Exception:
+                pass
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+        try:
+            torch.cuda.ipc_collect()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -389,6 +398,18 @@ def run_rmu(model_name: str, bench_repo: str, workdir: Path, telemetry: Telemetr
         "elapsed_s": round(time.time() - t0, 1),
     }
     telemetry.push_json("rmu.json", result)
+    try:
+        model.to("cpu")
+        frozen.to("cpu")
+        updated.to("cpu")
+    except Exception:
+        pass
+    if hasattr(trainer, "model"):
+        trainer.model = None
+    if hasattr(trainer, "frozen_model"):
+        trainer.frozen_model = None
+    if hasattr(trainer, "optimizer"):
+        trainer.optimizer = None
     free_cuda(updated, model, frozen, trainer, tok)
     return result
 
@@ -398,7 +419,15 @@ def run_rmu(model_name: str, bench_repo: str, workdir: Path, telemetry: Telemetr
 # ---------------------------------------------------------------------------
 
 
-def run_circuitkit(model_name: str, workdir: Path, telemetry: Telemetry, timer: Timer) -> dict:
+def run_circuitkit(
+    model_name: str,
+    workdir: Path,
+    telemetry: Telemetry,
+    timer: Timer,
+    n_examples: int = 4,
+    ig_steps: int = 2,
+    scope: str = "both",
+) -> dict:
     timer.check("circuitkit", need=600)
     import torch
     import circuitkit as ck
@@ -414,11 +443,11 @@ def run_circuitkit(model_name: str, workdir: Path, telemetry: Telemetry, timer: 
             "wmdp",
             algorithm="eap-ig",
             level="node",
-            n_examples=4,
+            n_examples=n_examples,
             batch_size=1,
-            ig_steps=2,
+            ig_steps=ig_steps,
             configs=["wmdp-cyber"],
-            scope="both",
+            scope=scope,
             model_name=model_name,
             output_path=str(artifact),
         )
@@ -429,7 +458,9 @@ def run_circuitkit(model_name: str, workdir: Path, telemetry: Telemetry, timer: 
             "phase": "circuitkit",
             "model": model_name,
             "algorithm": "eap-ig",
-            "n_examples": 4,
+            "n_examples": n_examples,
+            "ig_steps": ig_steps,
+            "scope": scope,
             "batch_size": 1,
             "n_nodes_scored": len(scores),
             "top_nodes": [[str(k), float(v)] for k, v in top_nodes],
@@ -441,6 +472,11 @@ def run_circuitkit(model_name: str, workdir: Path, telemetry: Telemetry, timer: 
         telemetry.push_json("circuitkit.json", result)
         return result
     finally:
+        try:
+            if tl_model is not None and hasattr(tl_model, "to"):
+                tl_model.to("cpu")
+        except Exception:
+            pass
         free_cuda(circuit, tl_model)
 
 
@@ -541,6 +577,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--n-per-pair", type=int, default=100)
     parser.add_argument("--max-seconds", type=int, default=3300)
     parser.add_argument("--skip", nargs="*", default=[], choices=["base", "rmu", "circuitkit", "aligntune"])
+    parser.add_argument("--circuitkit-model", default=None, help="override model for the CircuitKIT proxy smoke")
+    parser.add_argument("--circuitkit-examples", type=int, default=4)
+    parser.add_argument("--circuitkit-ig-steps", type=int, default=2)
+    parser.add_argument("--circuitkit-scope", default="both", choices=["heads", "mlp", "both"])
     args = parser.parse_args(argv)
 
     workdir = Path("/tmp/zw_smoke")
@@ -578,7 +618,15 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if "circuitkit" not in args.skip:
-            summary["phases"]["circuitkit"] = run_circuitkit(args.model, workdir, telemetry, timer)
+            summary["phases"]["circuitkit"] = run_circuitkit(
+                args.circuitkit_model or args.model,
+                workdir,
+                telemetry,
+                timer,
+                n_examples=args.circuitkit_examples,
+                ig_steps=args.circuitkit_ig_steps,
+                scope=args.circuitkit_scope,
+            )
     except Exception as exc:  # noqa: BLE001
         summary["errors"].append({"phase": "circuitkit", "error": f"{type(exc).__name__}: {exc}", "traceback": traceback.format_exc()[-3000:]})
         print(f"[circuitkit] ERROR: {exc}", file=sys.stderr, flush=True)
