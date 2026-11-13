@@ -1,0 +1,46 @@
+#!/bin/bash
+# Phase 2 bootstrap: same dual-venv setup as bootstrap_l4.sh, then exec the
+# attack sweep. Keeps the pre-baked-image workflow reproducible.
+set -euo pipefail
+
+CORE=/tmp/venv_core
+ALIGN=/tmp/venv_aligntune
+
+if ! command -v uv >/dev/null 2>&1; then
+  pip install -q --break-system-packages uv
+fi
+
+uv venv --system-site-packages --seed "$CORE"
+"$CORE/bin/pip" install --no-cache-dir \
+  "transformers>=5.15,<5.22" \
+  "trl>=0.12,<1.15" \
+  "peft>=0.18,<1" \
+  "huggingface-hub>=1.5,<2" \
+  "transformer-lens==3.8.0" \
+  "bitsandbytes>=0.41" \
+  "datasets>=3.0" \
+  "accelerate>=1.4" \
+  "sentencepiece" \
+  "protobuf" \
+  "scikit-learn" \
+  "hf_transfer" \
+  "curatorkit[hf,connectors]" \
+  "circuitkit==0.2.3" \
+  "safetune==0.1.18" \
+  "auditkit==1.1.11"
+
+uv venv --system-site-packages --seed "$ALIGN"
+"$ALIGN/bin/pip" install --no-cache-dir \
+  "torchvision==0.28.0" \
+  "transformers>=5.15,<5.22" \
+  "peft>=0.18,<1" \
+  "datasets>=4.7.0" \
+  "accelerate>=1.6" \
+  "trl==1.7.1" \
+  "torchao==0.18.0" \
+  "aligntune==0.1.35"
+
+export ALIGNTUNE_BIN="$ALIGN/bin/aligntune"
+export ALIGNTUNE_PYTHON="$ALIGN/bin/python"
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+exec "$CORE/bin/python" /code/scripts/attack_sweep.py "$@"

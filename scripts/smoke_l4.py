@@ -446,6 +446,7 @@ def run_circuitkit(
             n_examples=n_examples,
             batch_size=1,
             ig_steps=ig_steps,
+            max_seq_len=256,
             configs=["wmdp-cyber"],
             scope=scope,
             model_name=model_name,
@@ -485,7 +486,14 @@ def run_circuitkit(
 # ---------------------------------------------------------------------------
 
 
-def run_aligntune(workdir: Path, bench_repo: str, telemetry: Telemetry, timer: Timer, max_seconds: int) -> dict:
+def run_aligntune(
+    workdir: Path,
+    bench_repo: str,
+    telemetry: Telemetry,
+    timer: Timer,
+    max_seconds: int,
+    model_override: str | None = None,
+) -> dict:
     timer.check("aligntune", need=420)
     t0 = time.time()
     train_path = workdir / "aligntune_train.jsonl"
@@ -540,7 +548,7 @@ print("ALIGNTUNE_RESULT " + json.dumps(result, default=str)[:3000])
     cmd = [
         align_python,
         str(smoke_script),
-        str(workdir / "rmu_ckpt"),
+        model_override or str(workdir / "rmu_ckpt"),
         str(train_path),
         str(out_dir),
     ]
@@ -581,6 +589,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--circuitkit-examples", type=int, default=4)
     parser.add_argument("--circuitkit-ig-steps", type=int, default=2)
     parser.add_argument("--circuitkit-scope", default="both", choices=["heads", "mlp", "both"])
+    parser.add_argument(
+        "--aligntune-model",
+        default="rmu",
+        help="'rmu' (checkpoint from the RMU phase), 'base' (fresh model), or an explicit path",
+    )
     args = parser.parse_args(argv)
 
     workdir = Path("/tmp/zw_smoke")
@@ -633,7 +646,14 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if "aligntune" not in args.skip:
-            summary["phases"]["aligntune"] = run_aligntune(workdir, args.bench_repo, telemetry, timer, args.max_seconds)
+            align_model = args.aligntune_model
+            if align_model == "base":
+                align_model = args.model
+            elif align_model == "rmu":
+                align_model = None
+            summary["phases"]["aligntune"] = run_aligntune(
+                workdir, args.bench_repo, telemetry, timer, args.max_seconds, model_override=align_model
+            )
     except Exception as exc:  # noqa: BLE001
         summary["errors"].append({"phase": "aligntune", "error": f"{type(exc).__name__}: {exc}", "traceback": traceback.format_exc()[-3000:]})
         print(f"[aligntune] ERROR: {exc}", file=sys.stderr, flush=True)
