@@ -416,6 +416,7 @@ def run_circuitkit(model_name: str, workdir: Path, telemetry: Telemetry, timer: 
         batch_size=1,
         configs=["wmdp-cyber"],
         scope="both",
+        model_name=model_name,
         output_path=str(artifact),
     )
     peak = gpu_peak_gb()
@@ -455,20 +456,53 @@ def run_aligntune(workdir: Path, bench_repo: str, telemetry: Telemetry, timer: T
             f.write(json.dumps({"text": text}, ensure_ascii=False) + "\n")
 
     out_dir = workdir / "aligntune_out"
+    smoke_script = workdir / "aligntune_smoke.py"
+    smoke_script.write_text(
+        '''
+import json
+import sys
+
+from aligntune.core.backend_factory import create_sft_trainer
+
+model_name, dataset_name, output_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+trainer = create_sft_trainer(
+    model_name=model_name,
+    dataset_name=dataset_name,
+    backend="trl",
+    output_dir=output_dir,
+    num_epochs=1,
+    batch_size=1,
+    learning_rate=2e-4,
+    max_seq_length=640,
+    max_steps=10,
+    use_peft=True,
+    lora_r=16,
+    lora_alpha=32,
+    lora_dropout=0.05,
+    gradient_accumulation_steps=1,
+    precision="bf16",
+    bf16=True,
+    logging_steps=1,
+    save_steps=1000,
+    eval_interval=1000,
+    task_type="sft",
+)
+result = trainer.train()
+print("ALIGNTUNE_RESULT " + json.dumps(result, default=str)[:3000])
+''',
+        encoding="utf-8",
+    )
+
+    align_bin = os.environ.get("ALIGNTUNE_BIN", "/opt/venv_aligntune/bin/aligntune")
+    align_python = os.environ.get("ALIGNTUNE_PYTHON", str(Path(align_bin).with_name("python")))
+    # The AlignTune CLI has a duplicate-kwarg bug for max_seq_length; use the
+    # public factory API directly so the 640-token budget is honored.
     cmd = [
-        os.environ.get("ALIGNTUNE_BIN", "/opt/venv_aligntune/bin/aligntune"),
-        "train",
-        "--backend", "trl",
-        "--type", "sft",
-        "--model", str(workdir / "rmu_ckpt"),
-        "--dataset", str(train_path),
-        "--max-steps", "10",
-        "--max-length", "640",
-        "--lora-r", "16",
-        "--batch-size", "1",
-        "--grad-accum", "1",
-        "--precision", "bf16",
-        "--output", str(out_dir),
+        align_python,
+        str(smoke_script),
+        str(workdir / "rmu_ckpt"),
+        str(train_path),
+        str(out_dir),
     ]
     timeout = max(60, min(1200, int(timer.remaining) - 120))
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)

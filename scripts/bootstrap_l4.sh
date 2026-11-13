@@ -45,4 +45,5 @@ uv venv --system-site-packages --seed "$ALIGN"
   "aligntune==0.1.35"
 
 export ALIGNTUNE_BIN="$ALIGN/bin/aligntune"
+export ALIGNTUNE_PYTHON="$ALIGN/bin/python"
 exec "$CORE/bin/python" /code/scripts/smoke_l4.py "$@"
