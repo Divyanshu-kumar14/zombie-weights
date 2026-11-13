@@ -70,6 +70,8 @@ def discover_circuit_layers(
     ig_steps: int,
 ) -> dict:
     import circuitkit as ck
+    from circuitkit.quick import build_discovery_config
+    from circuitkit.api import discover_circuit
 
     timer.check("circuit_discovery", need=900)
     reset_gpu_peak()
@@ -78,7 +80,10 @@ def discover_circuit_layers(
     tl_model = ck.load_model(model_name, dtype="bfloat16", device="cuda")
     circuit = None
     try:
-        circuit = ck.discover(
+        # Build the config from the loaded TL model, then free it before the
+        # engine loads its own copy. Keeping both resident needs ~15.6 GB and
+        # OOMs on a 24 GB L4 during EAP-IG.
+        cfg = build_discovery_config(
             tl_model,
             "wmdp",
             algorithm="eap-ig",
@@ -92,6 +97,13 @@ def discover_circuit_layers(
             model_name=model_name,
             output_path=str(artifact),
         )
+        free_cuda(tl_model)
+        tl_model = None
+        import gc
+        import torch
+        gc.collect()
+        torch.cuda.empty_cache()
+        circuit = discover_circuit(cfg)
         scores = dict(getattr(circuit, "scores", {}) or {})
         if not scores and getattr(circuit, "circuit_scores", None) is not None:
             scores = dict(getattr(circuit.circuit_scores, "node_scores", {}) or {})
