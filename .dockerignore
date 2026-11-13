@@ -1,0 +1,16 @@
+.venv/
+.git/
+.gitignore
+data/
+docs/
+tests/
+__pycache__/
+*.pyc
+*.pt
+*.pth
+*.safetensors
+*.bin
+checkpoints/
+outputs/
+cache/
+*.log
