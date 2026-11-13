@@ -407,37 +407,41 @@ def run_circuitkit(model_name: str, workdir: Path, telemetry: Telemetry, timer: 
     t0 = time.time()
     artifact = workdir / "circuit_discovery.pt"
     tl_model = ck.load_model(model_name, dtype="bfloat16", device="cuda")
-    circuit = ck.discover(
-        tl_model,
-        "wmdp",
-        algorithm="eap-ig",
-        level="node",
-        n_examples=20,
-        batch_size=1,
-        configs=["wmdp-cyber"],
-        scope="both",
-        model_name=model_name,
-        output_path=str(artifact),
-    )
-    peak = gpu_peak_gb()
-    scores = dict(getattr(circuit, "scores", {}) or {})
-    top_nodes = sorted(scores.items(), key=lambda kv: -abs(float(kv[1])))[:10]
-    result = {
-        "phase": "circuitkit",
-        "model": model_name,
-        "algorithm": "eap-ig",
-        "n_examples": 20,
-        "batch_size": 1,
-        "n_nodes_scored": len(scores),
-        "top_nodes": [[str(k), float(v)] for k, v in top_nodes],
-        "artifact": str(artifact),
-        "artifact_exists": artifact.exists(),
-        "peak_vram_gb": round(peak, 2),
-        "elapsed_s": round(time.time() - t0, 1),
-    }
-    telemetry.push_json("circuitkit.json", result)
-    free_cuda(circuit, tl_model)
-    return result
+    circuit = None
+    try:
+        circuit = ck.discover(
+            tl_model,
+            "wmdp",
+            algorithm="eap-ig",
+            level="node",
+            n_examples=4,
+            batch_size=1,
+            ig_steps=2,
+            configs=["wmdp-cyber"],
+            scope="both",
+            model_name=model_name,
+            output_path=str(artifact),
+        )
+        peak = gpu_peak_gb()
+        scores = dict(getattr(circuit, "scores", {}) or {})
+        top_nodes = sorted(scores.items(), key=lambda kv: -abs(float(kv[1])))[:10]
+        result = {
+            "phase": "circuitkit",
+            "model": model_name,
+            "algorithm": "eap-ig",
+            "n_examples": 4,
+            "batch_size": 1,
+            "n_nodes_scored": len(scores),
+            "top_nodes": [[str(k), float(v)] for k, v in top_nodes],
+            "artifact": str(artifact),
+            "artifact_exists": artifact.exists(),
+            "peak_vram_gb": round(peak, 2),
+            "elapsed_s": round(time.time() - t0, 1),
+        }
+        telemetry.push_json("circuitkit.json", result)
+        return result
+    finally:
+        free_cuda(circuit, tl_model)
 
 
 # ---------------------------------------------------------------------------

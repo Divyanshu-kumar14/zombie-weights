@@ -46,4 +46,5 @@ uv venv --system-site-packages --seed "$ALIGN"
 
 export ALIGNTUNE_BIN="$ALIGN/bin/aligntune"
 export ALIGNTUNE_PYTHON="$ALIGN/bin/python"
+export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 exec "$CORE/bin/python" /code/scripts/smoke_l4.py "$@"
