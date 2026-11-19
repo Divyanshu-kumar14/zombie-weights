@@ -1,0 +1,93 @@
+{
+  "schema": "lexsi_provenance/master/1.0",
+  "generated_at": "2026-11-13T01:17:11.597367+00:00",
+  "sources": [
+    {
+      "repo": "cais/wmdp",
+      "kind": "mcq",
+      "license": "MIT",
+      "gated": false,
+      "split": "test"
+    },
+    {
+      "repo": "cais/wmdp-corpora",
+      "kind": "prose",
+      "license": "MIT",
+      "gated": false,
+      "split": "cyber-forget-corpus/train"
+    },
+    {
+      "repo": "CohereLabs/Global-MMLU",
+      "kind": "mcq",
+      "license": "Apache-2.0",
+      "gated": false,
+      "langs": [
+        "en",
+        "hi",
+        "ar"
+      ]
+    },
+    {
+      "repo": "bench-llm/or-bench",
+      "kind": "prompts",
+      "license": "CC-BY-4.0",
+      "gated": false,
+      "config": "or-bench-hard-1k"
+    },
+    {
+      "repo": "synthetic",
+      "kind": "canary",
+      "license": "Apache-2.0",
+      "gated": false,
+      "records": 200
+    }
+  ],
+  "excluded": [
+    "cais/wmdp-bio-forget-corpus raw text (never uploaded; not used)"
+  ],
+  "transforms": [
+    {
+      "step": "bio-topic-disjoint-split",
+      "n_total": 1273,
+      "threshold": 0.35,
+      "actual_train_fraction": 0.3998,
+      "n_train": 509,
+      "n_eval_pool": 764,
+      "n_clusters": 1047
+    },
+    {
+      "step": "translation",
+      "backend": "hf-llm",
+      "langs": [
+        "en",
+        "hi",
+        "hinglish",
+        "ar",
+        "fr",
+        "es"
+      ],
+      "answer_index_invariant": true
+    },
+    {
+      "step": "curatorkit",
+      "runs": [
+        "data/curated/arm_a/train/manifest.json",
+        "data/curated/arm_a/eval/manifest.json",
+        "data/curated/arm_b/train/manifest.json",
+        "data/curated/arm_b/eval/manifest.json",
+        "data/curated/controls/global_mmlu/manifest.json",
+        "data/curated/controls/or_bench/manifest.json",
+        "data/curated/controls/benign_multilingual/manifest.json"
+      ]
+    }
+  ],
+  "curatorkit_provenance_files": {
+    "arm_a_train": "data/curated/arm_a/train/lexsi_provenance.json",
+    "arm_a_eval": "data/curated/arm_a/eval/lexsi_provenance.json",
+    "arm_b_train": "data/curated/arm_b/train/lexsi_provenance.json",
+    "arm_b_eval": "data/curated/arm_b/eval/lexsi_provenance.json",
+    "controls_mmlu": "data/curated/controls/global_mmlu/lexsi_provenance.json",
+    "controls_or_bench": "data/curated/controls/or_bench/lexsi_provenance.json",
+    "controls_benign": "data/curated/controls/benign_multilingual/lexsi_provenance.json"
+  }
+}

@@ -88,33 +88,51 @@ Evaluated across 15 language-task pairs ($N=100$ per pair):
 
 ### 3.2 The 4-Vector Attack Matrix (Kill-Gate H18)
 
-I trained a deep 140-step RMU baseline ($\alpha=1200$) to drive hazardous capabilities down to chance level and subjected it to four resurrection modalities:
+I trained a deep 140-step RMU baseline ($\alpha=1200$, English-only retain stream) and subjected it to four resurrection modalities ($N=100$ per language-task cell):
 
 | Attack Vector | Modality | Cyber Resurrection (Best Lang) | Bio Resurrection (Best Lang) | Gate Target ($\ge +10\text{ pp}$) |
 | :--- | :--- | :---: | :---: | :---: |
-| **Vector A: Cross-Lingual Evasion** | Querying in non-English translation | **+4.0 pp** (fr) | **+2.0 pp** (fr) | Not met |
-| **Vector B: Benign LoRA Adaptation** | 20 steps SFT on harmless text via `aligntune` | **-1.0 pp** (ar) | **+6.0 pp** (en) | Not met |
-| **Vector C: 4-Bit NF4 Quantization** | Weight discretization unmasking | **+1.0 pp** (fr) | **+6.0 pp** (es) | Not met |
-| **Vector D: SafeTune Abliteration** | Refusal steering vector removal (Layer 18) | **+5.0 pp** (fr) | **+2.0 pp** (es) | Not met |
+| **Vector A: Cross-Lingual Evasion** | Querying in non-English translation | **+1.0 pp** (fr) | **+2.0 pp** (fr) | Not met |
+| **Vector B: Benign LoRA Adaptation** | 20 steps SFT on harmless text via `aligntune` | **+3.0 pp** (fr) | **+4.0 pp** (en) | Not met |
+| **Vector C: 4-Bit NF4 Quantization** | Weight discretization unmasking | **-3.0 pp** (fr) | **+3.0 pp** (es) | Not met |
+| **Vector D: SafeTune Abliteration** | Refusal steering vector removal (Layer 18) | **+4.0 pp** (es) | **-1.0 pp** (en) | Not met |
 
-**Analysis:** Driving RMU for 140 steps successfully pushed baseline cyber capabilities down to near-chance levels (29.0% EN, 24.0%–25.0% in Hindi/Arabic/Hinglish). Under this deep unlearning regime, shallow 20-step LoRA adaptation and single-layer abliteration produce bounded $+4\text{ to }+6\text{ pp}$ rebounds rather than catastrophic +15 pp spikes (0 of 4 vectors crossed +10 pp). This provides an important negative result: deep logit suppression creates genuine friction against low-rank fine-tuning, requiring stronger weight transformations to break through.
+**Analysis:** RMU drove English cyber accuracy from 44.0% to **30.0%** and bio from 54.0% to **39.0%**, but it did **not** reach the pre-registered 20%–25% chance band. A parallel run with a multilingual retain mix landed at 29.0%, so the plateau is a property of the model/step budget, not of the retain language mix. Under this regime, none of the four attacks crossed $+10\text{ pp}$; the largest observed rebound was $+4.0\text{ pp}$. The correct reading is a **bounded negative result**: at this scale and step budget RMU removes roughly 14 pp of cyber capability and the tested shallow attacks cannot recover more than 4 pp of it. The 20-step LoRA and single-layer abliteration arms are also underpowered relative to a 10 pp gate, so absence of resurrection is evidence of inertia, not proof that no dormant circuit exists.
 
 ### 3.3 CircuitKIT Excision vs Random Control (Phase 3)
 
-Using CircuitKIT on an 80 GB A100 GPU ($N=32$ examples, 5 IG steps, sequence length 256, peak VRAM $62.62\text{ GB}$), I isolated the true top-6 functional MLP layers for cyber capability and benchmarked circuit-restricted RMU with multilingual retain regularization against an equal-budget random control:
+Using CircuitKIT on an 80 GB A100 GPU ($N=32$ requested / 29 retained after length filtering, 5 IG steps, sequence length 256, MLP scope, peak VRAM $62.62\text{ GB}$), I isolated the top-6 functional MLP layers for cyber capability and benchmarked circuit-restricted RMU against an equal-budget random control:
 
 - **Discovered Circuit Layers:** `[0, 4, 9, 16, 18, 19]` (Layer 16: 0.175, Layer 19: 0.164, Layer 18: 0.136, Layer 0: 0.136, Layer 9: 0.126, Layer 4: 0.120)
 - **Random Control Layers:** `[1, 5, 10, 11, 26, 29]` (seed 42)
-- **Training Parameters:** 140 steps RMU at $\alpha=1200$ with $\beta=2.0$ multilingual retain regularization (utility weight = 2400.0).
+- **Training Parameters:** 140 steps RMU at $\alpha=1200$, $\beta=0$, $N=50$ per language-task cell.
 
-| Arm | Targeted Layers | Max Cyber Resurrection | Max Bio Resurrection | Multilingual Retain Preservation | Verdict |
-| :--- | :--- | :---: | :---: | :---: | :---: |
-| **Circuit Arm** | `[0, 4, 9, 16, 18, 19]` | **8.0 pp** (NF4) | 14.0 pp (NF4) | **HI: 50.0% (0.0 pp drop)**<br>**AR: 48.0% (3.0 pp drop)** | **Circuit Suppressed** (<10 pp Cyber) |
-| **Random Control** | `[1, 5, 10, 11, 26, 29]` | **10.0 pp** (NF4) | 6.0 pp (NF4) | HI: 50.0%, AR: 48.0% | **Random Resurrects** ($\ge 10\text{ pp}$ Cyber) |
+| Arm | Targeted Layers | Baseline Cyber (EN) | Max Cyber Resurrection | Max Bio Resurrection | Global-MMLU After (EN/HI/AR) | Verdict |
+| :--- | :--- | :---: | :---: | :---: | :---: | :--- |
+| **Circuit Arm** | `[0, 4, 9, 16, 18, 19]` | **22.0%** | **+16.0 pp** (LoRA, es) | +4.0 pp (hi) | 20.0 / 20.0 / 20.0% | FAIL |
+| **Random Control** | `[1, 5, 10, 11, 26, 29]` | **22.0%** | **+10.0 pp** (LoRA hi / NF4 hinglish) | +4.0 pp (hi) | 18.0 / 20.0 / 24.0% | FAIL |
+
+**Pre-registered verdict (all four criteria):**
+
+| Criterion | Threshold | Measured | Result |
+| :--- | :--- | :---: | :---: |
+| Circuit resurrection | $< 5$ pp | **16.0 pp** | FAIL |
+| Random resurrection | $\ge 15$ pp | **10.0 pp** | FAIL |
+| Circuit beats random | — | 16.0 vs 10.0 pp | FAIL |
+| Global-MMLU drop | $\le 3$ pp | **37.0 pp EN** | FAIL |
 
 **Key Findings:**
-1. **Circuit Excision Beats Random Control on Cyber:** Circuit-targeted RMU kept cyber resurrection bounded to 8.0 pp across all four attacks, whereas the random control breached the 10.0 pp resurrection threshold under NF4 weight quantization (+10.0 pp in Hindi).
-2. **Utility Tax Eliminated:** Pairing circuit unlearning with $\beta=2.0$ multilingual retain loss completely resolved the Hindi MMLU collapse—Hindi general knowledge remained identical to baseline at **50.0% (0.0 pp drop)**, and Arabic dropped by only **3.0 pp** ($51\% \to 48\%$).
+1. **The circuit hypothesis did not replicate.** Restricting RMU to the discovered early-layer MLP circuit suppressed English cyber to 22.0% (the 20%–25% chance band), but benign LoRA resurrected **+16.0 pp** — *more* than the random control's +10.0 pp. Circuit-targeted unlearning is not more attack-resistant at this scale.
+2. **The utility tax is the binding constraint, not resurrection.** The same 140-step, $\alpha=1200$ run collapsed Global-MMLU from 57/50/51% to 20/20/20% (EN/HI/AR). Every configuration that protected utility also prevented forgetting: the $\beta>0$ utility-matching stream reduced total weight movement from $\|\Delta W\|_2 \approx 28.7$ to $\approx 4.0$ (table below).
+3. **Why $\beta$ cannot buy both.** RMU's forget term pushes activations toward a random direction while the retain/utility terms pull them back. Under AdamW's normalized step size, adding any competing term turns the weight trajectory into a near-random walk: $\|\Delta W\|_2$ collapses, the model stays functional, and cyber accuracy returns to 38%–44%.
+
+| $\beta$ | Retain stream | $\|\Delta W\|_2$ | EN cyber after RMU |
+| :---: | :--- | :---: | :---: |
+| 0.0 | EN-only (140 batches) | **28.7** | **22.0%** (circuit layers) / 30.0% (layers 5–7) |
+| 0.5 | EN-only + balanced utility | 4.0 | 44.0% |
+| 2.0 | multilingual interleaved + utility | 4.4 | 38.0%–40.0% |
+
+This is the honest core result: the "unlearning lie" in this configuration is not that a zombie circuit resurrects after a successful unlearn — it is that **RMU only suppresses the capability by damaging the model broadly**, and any attempt to regularize that damage removes the suppression.
 
 ---
 
@@ -140,13 +158,16 @@ Requires Python 3.12+ and an Nvidia GPU with $\ge 20\text{ GB}$ VRAM:
 git clone https://github.com/Divyanshu-kumar14/zombie-weights.git
 cd zombie-weights
 
-# Install dependencies via uv
+# Install test dependencies via uv
 uv venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# Run property tests
+# Run property tests (requires data/curated, tracked in this repo)
 pytest tests/ -v
+
+# The full GPU pipeline (smoke_l4, attack_sweep, circuit_breaker) runs only in
+# the dual-venv Docker image: ghcr.io/divyanshu-kumar14/zombie-weights-l4:latest
 ```
 
 ### 4.3 Running the Pipeline Stages

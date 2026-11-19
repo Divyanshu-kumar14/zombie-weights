@@ -48,10 +48,10 @@ I trained a deep 140-step RMU baseline ($\alpha=1200$) to push hazardous capabil
 
 | Attack Vector | Modality | Cyber Resurrection (Best Lang) | Bio Resurrection (Best Lang) | Gate $\ge +10\text{ pp}$ |
 | :--- | :--- | :---: | :---: | :---: |
-| **Vector A: Cross-Lingual Evasion** | Querying in non-English translation | **+4.0 pp** (fr) | **+2.0 pp** (fr) | ✗ FAIL |
-| **Vector B: Benign LoRA Adaptation** | 20 steps SFT on harmless text via `aligntune` | **-1.0 pp** (ar) | **+6.0 pp** (en) | ✗ FAIL |
-| **Vector C: 4-Bit NF4 Quantization** | Weight discretization unmasking | **+1.0 pp** (fr) | **+6.0 pp** (es) | ✗ FAIL |
-| **Vector D: SafeTune Abliteration** | Refusal steering vector removal (Layer 18) | **+5.0 pp** (fr) | **+2.0 pp** (es) | ✗ FAIL |
+| **Vector A: Cross-Lingual Evasion** | Querying in non-English translation | **+1.0 pp** (fr) | **+2.0 pp** (fr) | ✗ FAIL |
+| **Vector B: Benign LoRA Adaptation** | 20 steps SFT on harmless text via `aligntune` | **+3.0 pp** (fr) | **+4.0 pp** (en) | ✗ FAIL |
+| **Vector C: 4-Bit NF4 Quantization** | Weight discretization unmasking | **-3.0 pp** (fr) | **+3.0 pp** (es) | ✗ FAIL |
+| **Vector D: SafeTune Abliteration** | Refusal steering vector removal (Layer 18) | **+4.0 pp** (es) | **-1.0 pp** (en) | ✗ FAIL |
 
 **Kill-Gate H18 Result:** 0 of 4 vectors crossed the $+10\text{ pp}$ gate.
 
@@ -68,17 +68,26 @@ Running node-level EAP-IG discovery across 32 examples (5 IG steps, sequence len
 - **Discovered Circuit Layers:** `[0, 4, 9, 16, 18, 19]` (Layer 16: 0.175, Layer 19: 0.164, Layer 18: 0.136, Layer 0: 0.136, Layer 9: 0.126, Layer 4: 0.120)
 - **Random Control Layers (Seed 42):** `[1, 5, 10, 11, 26, 29]`
 
-I ran 140 steps of RMU ($\alpha=1200$) with a $\beta=2.0$ multilingual retain stream on both arms and re-ran the full attack matrix:
+I ran 140 steps of RMU at $\alpha=1200$, $\beta=0$, $N=50$ per language-task cell on both arms and re-ran the full attack matrix:
 
-| Arm | Targeted Layers | Max Cyber Resurrection | Max Bio Resurrection | Multilingual Retain Preservation | Verdict |
-| :--- | :--- | :---: | :---: | :---: | :---: |
-| **Circuit Arm** | `[0, 4, 9, 16, 18, 19]` | **8.0 pp** (NF4) | 14.0 pp (NF4) | **HI: 50.0% (0.0 pp drop)**<br>**AR: 48.0% (3.0 pp drop)** | **Circuit Suppressed** (<10 pp Cyber) |
-| **Random Control** | `[1, 5, 10, 11, 26, 29]` | **10.0 pp** (NF4) | 6.0 pp (NF4) | HI: 50.0%, AR: 48.0% | **Random Resurrects** ($\ge 10\text{ pp}$ Cyber) |
+| Arm | Targeted Layers | Baseline Cyber (EN) | Max Cyber Resurrection | Max Bio Resurrection | Global-MMLU After (EN/HI/AR) | Verdict |
+| :--- | :--- | :---: | :---: | :---: | :---: | :--- |
+| **Circuit Arm** | `[0, 4, 9, 16, 18, 19]` | **22.0%** | **+16.0 pp** (LoRA, es) | +4.0 pp (hi) | 20.0 / 20.0 / 20.0% | FAIL |
+| **Random Control** | `[1, 5, 10, 11, 26, 29]` | **22.0%** | **+10.0 pp** (LoRA hi / NF4 hinglish) | +4.0 pp (hi) | 18.0 / 20.0 / 24.0% | FAIL |
+
+**Pre-registered verdict (all four criteria):**
+
+| Criterion | Threshold | Measured | Result |
+| :--- | :--- | :---: | :---: |
+| Circuit resurrection | $< 5$ pp | **16.0 pp** | FAIL |
+| Random resurrection | $\ge 15$ pp | **10.0 pp** | FAIL |
+| Circuit beats random | — | 16.0 vs 10.0 pp | FAIL |
+| Global-MMLU drop | $\le 3$ pp | **37.0 pp EN** | FAIL |
 
 **Key Findings:**
-1. **Circuit Excision Protects Against Unmasking:** Circuit-targeted RMU kept cyber resurrection bounded to 8.0 pp, while random control was unmasked by NF4 quantization (+10.0 pp).
-2. **Utility Tax Eliminated:** Adding $\beta=2.0$ multilingual retain regularization completely protected Hindi general intelligence: Hindi MMLU remained at **50.0% (0.0 pp drop)**, and Arabic dropped by only **3.0 pp** ($51\% \to 48\%$).
-3. **Biological Domain Specificity:** NF4 quantization resurrected Bio capabilities on the cyber circuit arm (+14.0 pp), demonstrating that biological hazards reside in distinct circuits that require separate excision.
+1. **The circuit hypothesis did not replicate.** Restricting RMU to the discovered early-layer MLP circuit suppressed English cyber to 22.0% (the 20%–25% chance band), but benign LoRA resurrected **+16.0 pp** — *more* than the random control's +10.0 pp. Circuit-targeted unlearning is not more attack-resistant at this scale.
+2. **The utility tax is the binding constraint, not resurrection.** The same 140-step, $\alpha=1200$ run collapsed Global-MMLU from 57/50/51% to 20/20/20% (EN/HI/AR). Every configuration that protected utility also prevented forgetting: adding any competing retain term turns the weight trajectory into a near-random walk, $\|\Delta W\|_2$ collapses, the model stays functional, and cyber accuracy returns to 38%–44%.
+3. **Why $\beta$ cannot buy both.** RMU's forget term pushes activations toward a random direction while the retain/utility terms pull them back. Under AdamW's normalized step size, $\|\Delta W\|_2$ drops from $\approx 28.7$ at $\beta=0$ to $\approx 4.0$–$4.4$ at $\beta>0$, so the model stays functional and cyber accuracy returns to 38%–44%.
 
 ---
 

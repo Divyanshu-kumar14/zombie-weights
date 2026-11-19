@@ -1,0 +1,6 @@
+# Test / dataset-build dependencies (public PyPI).
+# The Lexsi toolkits (curatorkit, circuitkit, safetune, aligntune, auditkit)
+# and torch/transformers are provided by the dual-venv Docker image:
+#   ghcr.io/divyanshu-kumar14/zombie-weights-l4:latest
+pytest
+hypothesis

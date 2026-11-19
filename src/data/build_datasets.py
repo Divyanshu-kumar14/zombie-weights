@@ -1075,7 +1075,16 @@ See `manifest.json` and `lexsi_provenance.json` for hashes, counts, and CuratorK
 
 
 def push_to_hub(out_root: Path, repo_id: str = PUBLISH_REPO) -> str:
+    """Upload the curated dataset to HF Hub. Refuses to run without an HF token."""
     from huggingface_hub import HfApi
+
+    if not os.environ.get("HF_TOKEN") and not (
+        Path.home() / ".cache" / "huggingface" / "token"
+    ).exists():
+        raise RuntimeError(
+            "HF_TOKEN is not set and ~/.cache/huggingface/token is missing. "
+            "Run `hf auth login` or set HF_TOKEN before --push."
+        )
 
     api = HfApi()
     api.create_repo(repo_id, repo_type="dataset", exist_ok=True, private=False)
