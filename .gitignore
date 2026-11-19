@@ -43,7 +43,7 @@ Thumbs.db
 # Telemetry / logs
 *.log
 telemetry/
-data/
+/data/
 
 # Orchestrator scratch
 .orchestrator/
