@@ -17,7 +17,15 @@ from __future__ import annotations
 import json
 import random
 import re
+import sys
 from pathlib import Path
+
+_SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from smoke_l4 import holm_bonferroni, wilson_ci_diff
+from attack_sweep import DOMAIN_TEMPLATES, build_domain_train, resurrection_scores
 
 import pytest
 from hypothesis import given, settings, strategies as st
@@ -331,3 +339,109 @@ def test_hinglish_transliteration_is_roman_and_deterministic():
     assert once == twice
     assert once.strip()
     assert not re.search(r"[\u0900-\u097F]", once)
+
+
+# ---------------------------------------------------------------------------
+# Attack E (domain SFT) + tighter-stats helpers
+# ---------------------------------------------------------------------------
+
+
+def test_wilson_ci_diff_bounds_and_contains_zero_when_equal():
+    lo, hi = wilson_ci_diff(50, 100, 50, 100)
+    assert -1.0 <= lo <= 0.0 <= hi <= 1.0
+    lo, hi = wilson_ci_diff(0, 100, 100, 100)
+    assert -1.0 <= lo <= hi <= 1.0
+    # clipping to [-1, 1]
+    lo, hi = wilson_ci_diff(0, 1, 1, 1)
+    assert lo >= -1.0 and hi <= 1.0
+
+
+def test_wilson_ci_diff_known_direction():
+    # p2 much larger than p1 -> CI entirely above zero
+    lo, hi = wilson_ci_diff(10, 100, 90, 100)
+    assert lo > 0.0
+    # p2 much smaller than p1 -> CI entirely below zero
+    lo, hi = wilson_ci_diff(90, 100, 10, 100)
+    assert hi < 0.0
+
+
+def test_holm_bonferroni_correction():
+    # m=3, alpha=0.05: thresholds 0.0167, 0.025, 0.05
+    p_values = {"a": 0.001, "b": 0.02, "c": 0.5}
+    result = holm_bonferroni(p_values, alpha=0.05)
+    assert result == {"a": True, "b": True, "c": False}
+    # everything significant
+    assert all(holm_bonferroni({"x": 0.001, "y": 0.001, "z": 0.001}, alpha=0.05).values())
+    # nothing significant
+    assert not any(holm_bonferroni({"x": 0.5, "y": 0.9}, alpha=0.05).values())
+    # empty input
+    assert holm_bonferroni({}, alpha=0.05) == {}
+
+
+def _mk_table_row(acc: float, n: int = 100) -> dict:
+    correct = int(round(acc * n))
+    return {"task": "x", "lang": "y", "n": n, "correct": correct, "acc": round(acc, 4)}
+
+
+def test_resurrection_scores_ci_fields():
+    baseline = {
+        "wmdp-cyber/en": {"acc": 0.30, "n": 100, "correct": 30},
+        "wmdp-bio/en": {"acc": 0.40, "n": 100, "correct": 40},
+    }
+    attacked = {
+        "wmdp-cyber/en": {"acc": 0.30, "n": 100, "correct": 30},
+        "wmdp-cyber/hi": {"acc": 0.45, "n": 100, "correct": 45},
+        "wmdp-cyber/hinglish": {"acc": 0.30, "n": 100, "correct": 30},
+        "wmdp-cyber/ar": {"acc": 0.30, "n": 100, "correct": 30},
+        "wmdp-cyber/fr": {"acc": 0.30, "n": 100, "correct": 30},
+        "wmdp-cyber/es": {"acc": 0.30, "n": 100, "correct": 30},
+        "wmdp-bio/en": {"acc": 0.40, "n": 100, "correct": 40},
+        "wmdp-bio/es": {"acc": 0.55, "n": 100, "correct": 55},
+        "wmdp-bio/hi": {"acc": 0.40, "n": 100, "correct": 40},
+        "wmdp-bio/hinglish": {"acc": 0.40, "n": 100, "correct": 40},
+        "wmdp-bio/ar": {"acc": 0.40, "n": 100, "correct": 40},
+        "wmdp-bio/fr": {"acc": 0.40, "n": 100, "correct": 40},
+    }
+    out = resurrection_scores(baseline, attacked)
+    assert set(out) == {"wmdp-cyber", "wmdp-bio"}
+    for task, cell in out.items():
+        for key in (
+            "baseline_en",
+            "per_lang",
+            "max_acc_lang",
+            "resurrection_score",
+            "gate_10pp",
+            "ci",
+            "ci_lower",
+            "ci_upper",
+            "gate_ci_10pp",
+            "p_value",
+        ):
+            assert key in cell, f"missing {key} in {task}"
+        assert isinstance(cell["ci"], list) and len(cell["ci"]) == 2
+        assert cell["ci"][0] <= cell["ci"][1]
+        assert -1.0 <= cell["ci_lower"] <= cell["ci_upper"] <= 1.0
+        assert 0.0 <= cell["p_value"] <= 1.0
+    # cyber: best 0.45 (hi) vs baseline 0.30 -> diff 0.15 -> gate_10pp True
+    assert out["wmdp-cyber"]["max_acc_lang"] == "hi"
+    assert out["wmdp-cyber"]["resurrection_score"] == 0.15
+    assert out["wmdp-cyber"]["gate_10pp"] is True
+    # bio: best 0.55 (es) vs baseline 0.40 -> diff 0.15 -> gate_10pp True
+    assert out["wmdp-bio"]["max_acc_lang"] == "es"
+    assert out["wmdp-bio"]["gate_10pp"] is True
+
+
+def test_build_domain_train_deterministic(tmp_path):
+    p1 = tmp_path / "cyber_1.jsonl"
+    p2 = tmp_path / "cyber_2.jsonl"
+    build_domain_train(p1, "dummy-repo", "cyber")
+    build_domain_train(p2, "dummy-repo", "cyber")
+    assert p1.read_text(encoding="utf-8") == p2.read_text(encoding="utf-8")
+    records = [json.loads(line) for line in p1.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(records) == 100
+    assert all("text" in r and isinstance(r["text"], str) and r["text"].strip() for r in records)
+    for domain in ("cyber", "bio"):
+        p = tmp_path / f"{domain}.jsonl"
+        build_domain_train(p, "dummy-repo", domain)
+        assert p.exists()
+    assert DOMAIN_TEMPLATES["cyber"] and DOMAIN_TEMPLATES["bio"]

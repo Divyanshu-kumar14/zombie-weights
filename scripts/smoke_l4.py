@@ -121,6 +121,39 @@ def wilson_ci(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     return max(0.0, centre - half), min(1.0, centre + half)
 
 
+def wilson_ci_diff(k1: int, n1: int, k2: int, n2: int, z: float = 1.96) -> tuple[float, float]:
+    """Newcombe hybrid CI for the difference p2 - p1 of two independent proportions.
+
+    Computes a Wilson score interval for each proportion, then returns
+    (l2 - u1, u2 - l1), clipped to [-1, 1].
+    """
+    l1, u1 = wilson_ci(k1, n1, z)
+    l2, u2 = wilson_ci(k2, n2, z)
+    lo = l2 - u1
+    hi = u2 - l1
+    return max(-1.0, lo), min(1.0, hi)
+
+
+def _norm_sf(z: float) -> float:
+    """One-sided standard-normal survival function P(Z > z)."""
+    return 0.5 * math.erfc(z / math.sqrt(2.0))
+
+
+def holm_bonferroni(p_values: dict[str, float], alpha: float = 0.05) -> dict[str, bool]:
+    """Holm step-down family-wise correction; returns per-key significance."""
+    result = {key: False for key in p_values}
+    if not p_values:
+        return result
+    items = sorted(p_values.items(), key=lambda kv: kv[1])
+    m = len(items)
+    for rank, (key, p) in enumerate(items, start=1):
+        if p <= alpha / (m - rank + 1):
+            result[key] = True
+        else:
+            break
+    return result
+
+
 def download_bench_file(filename: str, bench_repo: str) -> str:
     from huggingface_hub import hf_hub_download
 
